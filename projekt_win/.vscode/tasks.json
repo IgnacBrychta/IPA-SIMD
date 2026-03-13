@@ -1,0 +1,40 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Make",
+            "type": "shell",
+            "command": "${workspaceFolder}/../mingw64/bin/mingw32-make.exe", // Or "mingw32-make" if you are using MinGW on Windows and "make" is not in your PATH
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Clean Object Files (Windows)",
+            "type": "shell",
+            "command": "del",
+            "args": [
+                "build/*.o"
+            ],
+            "problemMatcher": [],
+            "group": "cleanup",
+            "detail": "Deletes all object files (*.o) in the current directory"
+        },
+        {
+            "label": "Run",
+            "type": "shell",
+            "command": "${workspaceFolder}/../mingw64/bin/mingw32-make.exe run",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "Make"
+        }
+    ]
+}
