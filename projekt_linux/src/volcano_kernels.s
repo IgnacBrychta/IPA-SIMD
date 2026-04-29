@@ -302,20 +302,52 @@ volcanoParticleStepBatchAsm:
     sub r11, rdx # remainder
     mov rdx, r13 # restore
 
+    # r10 = counter
     # r11 = loop limit
     # r12 = struct *
     mov r12, [rbp + 0x28]
-
 .loop:
+    mov r14, r10
+    shl r14, 2 # incrementing by 8 (=2^3), multiply by 4 (2^2)
+    
+    # increment pointers
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r9
+
+    add rdi, r14
+    add rsi, r14
+    add rdx, r14
+    add rcx, r14
+    add r8, r14
+    add r9, r14
+
     # push args last to first
-    push r12
-    push qword ptr [rbp + 0x20]
-    push qword ptr [rbp + 0x18]
-    push qword ptr [rbp + 0x10]
+    push r12 # const
+
+    push qword ptr [rbp + 0x20] # const
+
+    mov r13, [rbp + 0x18]
+    add r13, r14 # processed another 8, add to offset
+    push r13
+
+    mov r13, [rbp + 0x10]
+    add r13, r14 # processed another 8, add to offset
+    push r13
+
     # call volcanoParticleStepSIMDAsm
     call volcanoParticleStepSIMDAsm
     # cleanup
-    add rsp, 32
+    add rsp, 32 # 4 8-byte args
+    pop r9
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
 
 
 
@@ -376,7 +408,7 @@ volcanoParticleStepSIMDAsm:
     vrsqrtps ymm0, ymm0 # 1/sqrt(max(r^2, \epslon_r))                               = invR
 
     mov r13, [rbp + 0x28] # struct dereference
-    mov r14, [rbp + 0x18] # *temperature derefenrece
+    mov r14, [rbp + 0x18] # *temperature dereference
 
     # ambient temperature
     vbroadcastss ymm1, [r13 + 12] # ambient temperature
@@ -473,31 +505,62 @@ volcanoParticleStepSIMDAsm:
     vmulps ymm5, ymm5, ymm8 # v_z * dt
 
 
-    vmovups ymm7, [rsi]
+    vmovups ymm7, [rsi] # p_y
     vaddps ymm7, ymm7, ymm3
     vmovups [rsi], ymm7
 
-    vmovups ymm7, [rdi]
+    vmovups ymm7, [rdi] # p_x
     vaddps ymm7, ymm7, ymm6
     vmovups [rdi], ymm7
 
-    vmovups ymm7, [rdx]
+    vmovups ymm7, [rdx] # p_z
     vaddps ymm7, ymm7, ymm5
     vmovups [rdx], ymm7
 
-    
 
 
+    vmovups ymm7, [rip + vk_vec_life_scale]
+    vmulps ymm7, ymm7, ymm1 # c_{l1} * T_{norm}
+
+    vmovups ymm8, [rip + vk_vec_life_base]
+    vaddps ymm7, ymm7, ymm8 # c_{l0} + c_{l1} * T_{norm}
+
+    vbroadcastss ymm8, [r13 + 0] # dt
+    vmulps ymm7, ymm7, ymm8 # dt * (c_{l0} + c_{l1} * T_{norm})
+
+    mov r14, [rbp + 0x10]
+    vmovups ymm9, [r14] # life_i
+
+    vsubps ymm9, ymm9, ymm7 # life_i - dt * (c_{l0} + c_{l1} * T_{norm})
+    vmovups [r14], ymm9
 
 
-    # vmulps ymm0, ymm0, 
+    vmovups ymm7, ymm2 # r^2
+    vmovups ymm9, [rip + vk_vec_cool_rad]
+    vsubps ymm7, ymm7, ymm9 # r^2 - \eps_t
 
+    vsqrtps ymm7, ymm7 # sqrt(r^2 - \eps_t)
 
+    vmovups ymm9, [rip + vk_vec_cool_scale]
+    vmulps ymm7, ymm7, ymm9 # c_{t1} * sqrt(r^2 - \eps_t)
 
-    
-    # vbroadcastps ymm, [rdi] # x_i
+    vmovups ymm9, [rip + vk_vec_cool_base] # c_{t0}
 
+    vaddps ymm7, ymm7, ymm9 # c_{t0} + c_{t1} * sqrt(r^2 - \eps_t)
 
+    vmulps ymm7, ymm7, ymm8 # dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+
+    vbroadcastss ymm8, [r13 + 28] # k_{cool}
+
+    vmulps ymm7, ymm7, ymm8 # k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+
+    mov r14, [rbp + 0x18] # *temperature dereference
+
+    vmovups ymm8, [r14] # T_i
+
+    vsubps ymm7, ymm8, ymm7 # T_i - k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+
+    vmovups [r14], ymm7 # store T_i
 
     pop rbp
     ret
