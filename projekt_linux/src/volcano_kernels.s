@@ -275,14 +275,14 @@ volcanoParticleStepAsm:
 # rbp + 0x18    =   *temperature
 # rbp + 0x20    =   particleCount
 # rbp + 0x28    =   &{
-#                        dt,
-#                        gravity,
-#                        plumeBuoyancy,
-#                        ambientTemperature,
-#                        damping,
-#                        windX,
-#                        windZ,
-#                        particleCooling
+#     + 0                dt,
+#     + 4                gravity,
+#     + 8                plumeBuoyancy,
+#     + 12               ambientTemperature,
+#     + 16               damping,
+#     + 20               windX,
+#     + 24               windZ,
+#     + 28               particleCooling
 #                    };
 volcanoParticleStepBatchAsm:
     # TODO:
