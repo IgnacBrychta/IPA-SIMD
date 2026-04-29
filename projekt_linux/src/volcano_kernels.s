@@ -300,6 +300,7 @@ volcanoParticleStepBatchAsm:
     mov r14, 8
     div r14
     sub r11, rdx # remainder
+    mov r15, rdx # preserve remainder
     mov rdx, r13 # restore
 
     # r10 = counter
@@ -309,7 +310,7 @@ volcanoParticleStepBatchAsm:
 .loop:
     mov r14, r10
     shl r14, 2 # incrementing by 8 (=2^3), multiply by 4 (2^2)
-    
+
     # increment pointers
     push rdi
     push rsi
@@ -356,7 +357,112 @@ volcanoParticleStepBatchAsm:
     cmp r11, r10
     ja .loop
 
+
+
     # process tail
+    # sub r10, 8 # incremented, loop exited, but the tail is not processed yet
+    shl r10, 2 # multiply by sizeof(float) = 4
+    # r15 = remainder
+    xor r11, r11 # counter
+
+    add rdi, r10
+    add rsi, r10
+    add rdx, r10
+    add rcx, r10
+    add r8, r10
+    add r9, r10
+
+.tail_loop:
+    cmp r15, r11
+    jna .tail_loop_end
+# void volcanoParticleStepAsm(...)
+# Pointer args arrive in:
+# rdi           =   *posX
+# rsi           =   *posY
+# rdx           =   *posZ
+# rcx           =   *velX
+# r8            =   *velY
+# r9            =   *velZ
+# ymm0          =   dt
+# ymm1          =   gravity
+# ymm2          =   plumeBuoyancy
+# ymm3          =   tempNorm
+# ymm4          =   damping
+# ymm5          =   windX
+# ymm6          =   windZ
+# ymm7          =   invR
+# ymm8          =   ventPush
+    # calculate invR
+    movss xmm0, [rdi] # x
+    mulss xmm0, xmm0 # x^2
+    movss xmm1, [rdx] # z
+    mulss xmm1, xmm1 # z^2
+
+    addss xmm0, xmm1 # r^2 = x^2 + z^2
+    movss xmm2, xmm1 # preserver r^2
+    movss xmm1, [rip + vk_min_rad2_s]
+
+    maxss xmm0, xmm1 # max(r^2 = x^2 + z^2, \eps_r)
+    rsqrtss xmm0, xmm0 # 1/sqrt(max(r^2 = x^2 + z^2, \eps_r))
+    movss xmm7, xmm0
+
+    # calculate tempNorm
+    mov r12, [rbp + 0x18] # *temperature
+    mov r13, [rbp + 0x28] # struct
+    movss xmm0, [r12] # temperature
+    movss xmm1, [r13 + 12] # ambient temperature
+
+    subss xmm0, xmm1 # T_i - t_{amb}
+    movss xmm1, [rip + vk_inv_temp_s]
+    mulss xmm0, xmm1 # (T_i - t_{amb}) / T_{span} # inverse
+    movss xmm1, [rip + vk_zero]
+    maxss xmm0, xmm1
+    movss xmm1, [rip + vk_temp_norm_max_s]
+    minss xmm0, xmm1 # clamp((T_i - t_{amb}) / T_{span}, 0, T_{normMax})
+
+    movss xmm3, xmm0
+
+    # calculate ventPush
+    # const float ventPush = max0(1.2f - radius2) * tempNorm * 5.2f;
+    movss xmm0, [rip + vk_vent_rad2_s]
+    subss xmm0, xmm2 # 1.2f - r^2
+    movss xmm1, [rip + vk_zero]
+    maxss xmm0, xmm1 # max0(1.2f - r^2)
+
+    mulss xmm0, xmm3 # max0(1.2f - r^2) * tempNorm
+    movss xmm1, [rip + vk_vent_scale_s]
+    mulss xmm0, xmm1 # max0(1.2f - r^2) * tempNorm * 5.2f
+
+    movss xmm8, xmm0
+
+    # pass dt
+    movss xmm0, [r13 + 0]
+    # pass gravity
+    movss xmm1, [r13 + 4]
+    # pass plumeBuoyancy
+    movss xmm2, [r13 + 8]
+    # pass tempNorm (calculated)
+    # pass damping
+    movss xmm4, [r13 + 16]
+    # pass windX
+    movss xmm5, [r13 + 20]
+    # pass windZ
+    movss xmm6, [r13 + 24]
+    # pass invR (calculated)
+    # pass ventPush (calculated)
+    call volcanoParticleStepAsm
+
+    add rdi, 4 # sizeof(float)
+    add rsi, 4 # sizeof(float)
+    add rdx, 4 # sizeof(float)
+    add rcx, 4 # sizeof(float)
+    add r8, 4 # sizeof(float)
+    add r9, 4 # sizeof(float)
+
+    
+    inc r11
+    jmp .tail_loop
+.tail_loop_end:
 
     pop rbp
     ret
