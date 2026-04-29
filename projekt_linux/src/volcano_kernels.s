@@ -415,7 +415,7 @@ volcanoParticleStepSIMDAsm:
     vmovups ymm2, [r14] # temperatures
     vsubps ymm1, ymm2, ymm1 # T_i - T_{amb}
     vmovups ymm2, [rip + vk_vec_inv_temp]
-    vdivps ymm1, ymm1, ymm2 # (T_i - T_{amb}) / T_{span}
+    vmulps ymm1, ymm1, ymm2 # (T_i - T_{amb}) / T_{span} # inverse
     vmovups ymm2, [rip + vk_vec_zero]
     vmaxps ymm1, ymm1, ymm2
 
