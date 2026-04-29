@@ -503,12 +503,13 @@ volcanoParticleStepSIMDAsm:
 
     vmovups ymm0, [rdi] # posX
     vmovups ymm1, [rdx] # posZ
-    vmulps ymm0, ymm0, ymm0 # x^2
-    vmulps ymm1, ymm1, ymm1 # z^2
 
-    # preserve x^2, z^2
+    # preserve x, z
     vmovups ymm9, ymm0
     vmovups ymm10, ymm1
+    
+    vmulps ymm0, ymm0, ymm0 # x^2
+    vmulps ymm1, ymm1, ymm1 # z^2
 
     vaddps ymm0, ymm0, ymm1 # x^2 + z^2                                             
     vmovups ymm11, ymm0 #                                                           = r^2
@@ -687,6 +688,13 @@ volcanoParticleStepSIMDAsm:
 # void volcanoUpdateLavaFluxSIMDAsm(...)
 # -----------------------------------------------------------------------------
 .global volcanoUpdateLavaFluxSIMDAsm
+# rdi           =   lavaHeightNext.data()
+# rsi           =   lavaHeight.data()
+# rdx           =   terrainHeight.data()
+# rcx           =   temperature.data()
+# r8            =   width
+# r9            =   height
+# ymm0          =   viscDt
 volcanoUpdateLavaFluxSIMDAsm:
     # TODO:
     # - iterate interior cells by rows
