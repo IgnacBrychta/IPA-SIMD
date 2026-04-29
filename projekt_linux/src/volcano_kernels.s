@@ -180,8 +180,8 @@ volcanoParticleStepAsm:
     movss xmm13, xmm11
     mulss xmm11, xmm11 # x^2
 
-    # mulss xmm12, xmm12 # y^2
     movss xmm13, [rdx] # z_i
+    mulss xmm13, xmm13 # z^2
 
     addss xmm11, xmm13 # x^2 + z^2 = r^2
 
@@ -505,11 +505,16 @@ volcanoParticleStepSIMDAsm:
     vmovups ymm1, [rdx] # posZ
     vmulps ymm0, ymm0, ymm0 # x^2
     vmulps ymm1, ymm1, ymm1 # z^2
+
+    # preserve x^2, z^2
+    vmovups ymm9, ymm0
+    vmovups ymm10, ymm1
+
     vaddps ymm0, ymm0, ymm1 # x^2 + z^2                                             
-    vmovups ymm2, ymm0 #                                                            = r^2
+    vmovups ymm11, ymm0 #                                                           = r^2
 
     vmovups ymm1, [rip + vk_vec_eps]
-    vminps ymm0, ymm1, ymm0 # max(r^2, \epsilon_r)
+    vmaxps ymm0, ymm1, ymm0 # max(r^2, \epsilon_r)
 
     vrsqrtps ymm0, ymm0 # 1/sqrt(max(r^2, \epslon_r))                               = invR
 
@@ -549,7 +554,7 @@ volcanoParticleStepSIMDAsm:
     
 
     vbroadcastss ymm4, [rip + vk_vec_vent_rad2]
-    vsubps ymm5, ymm4, ymm2 # R^2 - r^2
+    vsubps ymm5, ymm4, ymm11 # R^2 - r^2
     vmovups ymm4, [rip + vk_vec_zero]
 
     vmaxps ymm5, ymm5, ymm4 # max(0, R^2 - r^2)
@@ -559,6 +564,10 @@ volcanoParticleStepSIMDAsm:
     vmulps ymm4, ymm4, ymm5 # max(0, R^2 - r^2) * K_{vent} * T_{norm}               = a_{vent}
 
 
+    vmulps ymm4, ymm4, ymm0 # a_{vent} * invR
+    vmulps ymm9, ymm9, ymm4 # x_i * a_{vent} * invR
+    vmulps ymm10, ymm10, ymm4 # z_i * a_{vent} * invR
+
 
     vmovups ymm5, [rip + vk_vec_wind_scale]
     vmulps ymm5, ymm5, ymm1 # T_{norm} * c_{w1}
@@ -566,17 +575,20 @@ volcanoParticleStepSIMDAsm:
     vaddps ymm5, ymm5, ymm6 # T_{norm} * c_{w1} + c_{w2}
 
     vbroadcastss ymm6, [r13 + 20] # windX
-    vmulps ymm6, ymm5, ymm6 # windX * T_{norm} * c_{w1} + c_{w2}                    = a_x
+    vmulps ymm6, ymm5, ymm6 # windX * (T_{norm} * c_{w1} + c_{w2})
+
+    vaddps ymm6, ymm6, ymm9 # windX * (T_{norm} * c_{w1} + c_{w2}) + x_i * a_{vent} * invR = a_x
 
     vbroadcastss ymm7, [r13 + 24] # windZ
-    vmulps ymm5, ymm5, ymm7 # windZ * T_{norm} * c_{w1} + c_{w2}                    = a_z
+    vmulps ymm5, ymm5, ymm7 # windZ * (T_{norm} * c_{w1} + c_{w2})
 
+    vaddps ymm5, ymm5, ymm10 # windZ * (T_{norm} * c_{w1} + c_{w2}) + z_i * a_{vent} * invR = a_z
     
-    vbroadcastss ymm7, [r13 + 0] # dt
-    vmovups ymm8, ymm7
-    vmulps ymm3, ymm3, ymm7 # a_y * dt
-    vmulps ymm6, ymm6, ymm7 # a_x * dt
-    vmulps ymm5, ymm5, ymm7 # a_z * dt
+    vbroadcastss ymm12, [r13 + 0] # dt
+    vmovups ymm8, ymm12
+    vmulps ymm3, ymm3, ymm12 # a_y * dt
+    vmulps ymm6, ymm6, ymm12 # a_x * dt
+    vmulps ymm5, ymm5, ymm12 # a_z * dt
 
     vmovups ymm7, [r8] # velY
     vaddps ymm3, ymm7, ymm3 # v_y += a_y * dt
@@ -606,9 +618,9 @@ volcanoParticleStepSIMDAsm:
     vmovups [rcx], ymm6
     vmovups [r9], ymm5
 
-    vmulps ymm3, ymm3, ymm8 # v_y * dt
-    vmulps ymm6, ymm6, ymm8 # v_x * dt
-    vmulps ymm5, ymm5, ymm8 # v_z * dt
+    vmulps ymm3, ymm3, ymm12 # v_y * dt
+    vmulps ymm6, ymm6, ymm12 # v_x * dt
+    vmulps ymm5, ymm5, ymm12 # v_z * dt
 
 
     vmovups ymm7, [rsi] # p_y
@@ -631,8 +643,8 @@ volcanoParticleStepSIMDAsm:
     vmovups ymm8, [rip + vk_vec_life_base]
     vaddps ymm7, ymm7, ymm8 # c_{l0} + c_{l1} * T_{norm}
 
-    vbroadcastss ymm8, [r13 + 0] # dt
-    vmulps ymm7, ymm7, ymm8 # dt * (c_{l0} + c_{l1} * T_{norm})
+    # vbroadcastss ymm8, [r13 + 0] # dt
+    vmulps ymm7, ymm7, ymm12 # dt * (c_{l0} + c_{l1} * T_{norm})
 
     mov r14, [rbp + 0x10]
     vmovups ymm9, [r14] # life_i
@@ -643,28 +655,28 @@ volcanoParticleStepSIMDAsm:
 
     vmovups ymm7, ymm2 # r^2
     vmovups ymm9, [rip + vk_vec_cool_rad]
-    vsubps ymm7, ymm7, ymm9 # r^2 - \eps_t
+    vaddps ymm7, ymm7, ymm9 # r^2 + \eps_t
 
-    vsqrtps ymm7, ymm7 # sqrt(r^2 - \eps_t)
+    vsqrtps ymm7, ymm7 # sqrt(r^2 + \eps_t)
 
     vmovups ymm9, [rip + vk_vec_cool_scale]
-    vmulps ymm7, ymm7, ymm9 # c_{t1} * sqrt(r^2 - \eps_t)
+    vmulps ymm7, ymm7, ymm9 # c_{t1} * sqrt(r^2 + \eps_t)
 
     vmovups ymm9, [rip + vk_vec_cool_base] # c_{t0}
 
-    vaddps ymm7, ymm7, ymm9 # c_{t0} + c_{t1} * sqrt(r^2 - \eps_t)
+    vaddps ymm7, ymm7, ymm9 # c_{t0} + c_{t1} * sqrt(r^2 + \eps_t)
 
-    vmulps ymm7, ymm7, ymm8 # dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+    vmulps ymm7, ymm7, ymm12 # dt * (c_{t0} + c_{t1} * sqrt(r^2 + \eps_t))
 
     vbroadcastss ymm8, [r13 + 28] # k_{cool}
 
-    vmulps ymm7, ymm7, ymm8 # k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+    vmulps ymm7, ymm7, ymm8 # k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 + \eps_t))
 
     mov r14, [rbp + 0x18] # *temperature dereference
 
     vmovups ymm8, [r14] # T_i
 
-    vsubps ymm7, ymm8, ymm7 # T_i - k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 - \eps_t))
+    vsubps ymm7, ymm8, ymm7 # T_i - k_{cool} * dt * (c_{t0} + c_{t1} * sqrt(r^2 + \eps_t))
 
     vmovups [r14], ymm7 # store T_i
 
