@@ -82,7 +82,8 @@ vk_vec_lava_heat_s:   .float 100.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
     # tmp = tmp + bias
     vaddps \tmp, \tmp, YMMWORD PTR [rip + vk_vec_shape_bias]
 
-    # dst = pos * k
+    vmaxps \tmp, \tmp, YMMWORD PTR [rip + vk_vec_zero]
+
     vmulps \dst, \dst, \kval
 
     # dst = dst * shape
@@ -177,10 +178,11 @@ volcanoParticleStepAsm:
     mulss xmm10, [rip + vk_vent_scale_s] # K_{vent} * T_{norm}
 
     movss xmm11, [rdi] # x
-    movss xmm13, xmm11
+    movss xmm14, xmm11 # preserve x
     mulss xmm11, xmm11 # x^2
 
     movss xmm13, [rdx] # z_i
+    movss xmm15, xmm13 # preserve z
     mulss xmm13, xmm13 # z^2
 
     addss xmm11, xmm13 # x^2 + z^2 = r^2
@@ -205,12 +207,12 @@ volcanoParticleStepAsm:
 
     mulss xmm11, xmm5 # windX * (c_{w0} + c_{w1} * T_{norm})
 
-    mulss xmm13, xmm10 # x_i * a_{vent} * invR
-    addss xmm11, xmm13 # windX * (c_{w0} + c_{w1} * T_{norm}) + x_i * a_{vent} * invR =         a_x
+    mulss xmm14, xmm10 # x_i * a_{vent} * invR
+    addss xmm11, xmm14 # windX * (c_{w0} + c_{w1} * T_{norm}) + x_i * a_{vent} * invR =         a_x
 
-    mulss xmm13, xmm10 # z_i * a_{vent} * invR
+    mulss xmm15, xmm10 # z_i * a_{vent} * invR
     mulss xmm12, xmm6 # windZ * (c_{w0} + c_{w1} * T_{norm})
-    addss xmm12, xmm13 # windZ * (c_{w0} + c_{w1} * T_{norm}) + z_i * a_{vent} * invR =         a_z
+    addss xmm12, xmm15 # windZ * (c_{w0} + c_{w1} * T_{norm}) + z_i * a_{vent} * invR =         a_z
     
 
 
@@ -303,13 +305,13 @@ volcanoParticleStepBatchAsm:
     mov r15, rdx # preserve remainder
     mov rdx, r13 # restore
 
-    # r10 = counter
+    # r10 = counter (0, 8, 16, 24, 32...)
     # r11 = loop limit
     # r12 = struct *
     mov r12, [rbp + 0x28]
 .loop:
     mov r14, r10
-    shl r14, 2 # incrementing by 8 (=2^3), multiply by 4 (2^2)
+    shl r14, 2 # incrementing by 8 (=2^3) indexes, multiply by 4 (2^2) (sizeof(float))
 
     # increment pointers
     push rdi
@@ -360,17 +362,22 @@ volcanoParticleStepBatchAsm:
 
 
     # process tail
-    # sub r10, 8 # incremented, loop exited, but the tail is not processed yet
-    shl r10, 2 # multiply by sizeof(float) = 4
+    # incremented, loop exited, but the tail is not processed yet
+    shl r10, 2 # r10 is index; multiply by sizeof(float) = 4
     # r15 = remainder
     xor r11, r11 # counter
 
+    # increment pointers by what's been processed
     add rdi, r10
     add rsi, r10
     add rdx, r10
     add rcx, r10
     add r8, r10
     add r9, r10
+
+
+    mov r12, [rbp + 0x18] # *temperature
+    mov r13, [rbp + 0x28] # struct
 
 .tail_loop:
     cmp r15, r11
@@ -399,7 +406,7 @@ volcanoParticleStepBatchAsm:
     mulss xmm1, xmm1 # z^2
 
     addss xmm0, xmm1 # r^2 = x^2 + z^2
-    movss xmm2, xmm1 # preserver r^2
+    movss xmm2, xmm1 # preserve r^2
     movss xmm1, [rip + vk_min_rad2_s]
 
     maxss xmm0, xmm1 # max(r^2 = x^2 + z^2, \eps_r)
@@ -407,8 +414,6 @@ volcanoParticleStepBatchAsm:
     movss xmm7, xmm0
 
     # calculate tempNorm
-    mov r12, [rbp + 0x18] # *temperature
-    mov r13, [rbp + 0x28] # struct
     movss xmm0, [r12] # temperature
     movss xmm1, [r13 + 12] # ambient temperature
 
@@ -458,6 +463,7 @@ volcanoParticleStepBatchAsm:
     add rcx, 4 # sizeof(float)
     add r8, 4 # sizeof(float)
     add r9, 4 # sizeof(float)
+    add r12, 4 # sizeof(float)
 
     
     inc r11
@@ -498,6 +504,7 @@ volcanoParticleStepSIMDAsm:
     # - apply damping
     # - update posX/posY/posZ
     # - update life and temp
+
     push    rbp
     mov     rbp, rsp
 
