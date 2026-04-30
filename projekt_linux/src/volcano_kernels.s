@@ -1007,9 +1007,9 @@ volcanoDiffuseHeatSIMDAsm:
         vmovups ymm2, [rsi + r14 + 4] # temperature_R
         # lea r9, [r14 - rcx * 4]
         mov r9, r14
-        mov r14, rcx
-        shl r14, 2 # * 4
-        sub r9, r14
+        mov r15, rcx
+        shl r15, 2 # * 4
+        sub r9, r15
 
         vmovups ymm3, [rsi + r9] # temperature_U
         lea r9, [r14 + rcx * 4]
@@ -1023,7 +1023,7 @@ volcanoDiffuseHeatSIMDAsm:
         vmovups ymm6, [rip + vk_vec_four]
         vmulps ymm6, ymm0, ymm6 # 4.0 * t_C
 
-        vaddps ymm5, ymm5, ymm6 # t_L + t_R + t_U + t_D + 4.0 * t_C
+        vsubps ymm5, ymm5, ymm6 # t_L + t_R + t_U + t_D + 4.0 * t_C
 
         # fluid
         vmovups ymm6, ymm0
@@ -1051,28 +1051,29 @@ volcanoDiffuseHeatSIMDAsm:
         vmulps ymm8, ymm8, ymm14 # lavaCooling * (t_C - ambientTemperature)
 
         # next
-        vmulps ymm12, ymm12, ymm5 # diffusionAlpha * lap
-        vaddps ymm12, ymm12, ymm7 # diffusionAlpha * lap + lavaHeat
-        vsubps ymm12, ymm12, ymm8 # diffusionAlpha * lap + lavaHeat - cooling
-        vmulps ymm12, ymm12, ymm13 # dt * (diffusionAlpha * lap + lavaHeat - cooling)
-        vaddps ymm12, ymm12, ymm0 # c + dt * (diffusionAlpha * lap + lavaHeat - cooling)
+        vmulps ymm11, ymm12, ymm5 # diffusionAlpha * lap
+        vaddps ymm11, ymm11, ymm7 # diffusionAlpha * lap + lavaHeat
+        vsubps ymm11, ymm11, ymm8 # diffusionAlpha * lap + lavaHeat - cooling
+        vmulps ymm11, ymm11, ymm13 # dt * (diffusionAlpha * lap + lavaHeat - cooling)
+        vaddps ymm11, ymm11, ymm0 # c + dt * (diffusionAlpha * lap + lavaHeat - cooling)
 
-        # ! std::isfinite(next) ? std::clamp(next, ambientTemperature, 1520.0f) : ambientTemperature;
+        # std::isfinite(next) ? std::clamp(next, ambientTemperature, 1520.0f) : ambientTemperature;
         # need to preserve only next and ambientTemperature, so ymm0-ymm11 and ymm13-ymm14 free
         
         # clamp(next, ambientTemperature, 1520.0f)
         
-        vmovups ymm0, ymm12
+        vmovups ymm0, ymm11
         vmaxps ymm0, ymm0, ymm15
         vmovups ymm1, [rip + vk_vec_max_temp]
         vminps ymm0, ymm0, ymm1 # clamp(next, ambientTemperature, 1520.0f)
 
 
-        # ! isfinite(next); self comparison
-        vcmpps ymm1, ymm12, ymm12, 0x3 # VCMPUNORDPS
+        # isfinite(next); self comparison
+        vcmpps ymm1, ymm11, ymm11, 0x3 # VCMPUNORDPS
 
-        vmovups ymm2, [rip + vk_vec_zero]
-        vblendvps ymm3, ymm15, ymm0, ymm1
+        # vmovups ymm2, [rip + vk_vec_zero]
+        # vblendvps ymm3, ymm15, ymm0, ymm1
+        vblendvps ymm3, ymm0, ymm15, ymm1
 
 
         vmovups [rdi + r14 + 0], ymm3
