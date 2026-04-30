@@ -701,6 +701,243 @@ volcanoUpdateLavaFluxSIMDAsm:
     # - process 8 cells at once
     # - compute fluidity, k coefficients, in/out flow
     # - clamp output and write lavaHeightNext
+    mov r10, 1 # y
+    dec r9 # height - 1
+    mov r11, rdx # preserve terrainHeight.data()
+ret
+    # const int scalarStartX = 1 + ((width - 2) / 8) * 8;
+    mov r12, r8
+    sub r12, 2 # - 2
+    shr r12, 3 # / 8
+    shl r12, 3 # * 8
+    add r12, 1 # + 1
+
+    # viscDt
+    vbroadcastss ymm12, xmm0
+
+.flux_loop:
+    # rax =  # row = y * width
+    mov rax, r10 
+    mul r8
+    # rdx ignored
+
+    mov rdx, r11
+
+    mov r13, 1 # x
+    .flux_loop_inner:
+        # const std::size_t id = row + static_cast<std::size_t>(x);
+        mov rbx, rax
+        add rbx, r13 # rbx = id
+
+        vmovups ymm15, [rip + vk_vec_fluid_min] # 650.0
+        vmovups ymm14, [rip + vk_vec_zero] # 0.0
+        vmovups ymm13, [rip + vk_vec_one] # 1.0
+
+        # cell
+        lea r14, [rbx * 4]
+
+        vmovups ymm0, [rdx + r14 + 0] # terrain_C
+        vmovups ymm1, [rsi + r14 + 0] # lava_C
+        vaddps ymm0, ymm0, ymm1 # H_C
+
+        vmovups ymm1, [rcx + r14 + 0] # temperature_C
+        vsubps ymm1, ymm1, ymm15 # temperature_C - 650.0
+        vdivps ymm1, ymm1, ymm15 # (temperature_C - 650.0) / 650.0
+        vmaxps ymm1, ymm1, ymm14
+        vminps ymm1, ymm1, ymm13 # f_C = clamp((temperature_C - 650.0) / 650.0, 0.0, 1.0)
+
+        # left
+        vmovups ymm2, [rdx + r14 - 4] # terrain_L
+        vmovups ymm3, [rsi + r14 - 4] # lava_L
+        vaddps ymm2, ymm2, ymm3 # H_L
+
+        vmovups ymm3, [rcx + r14 - 4] # temperature_L
+        vsubps ymm3, ymm3, ymm15 # temperature_L - 650.0
+        vdivps ymm3, ymm3, ymm15 # (temperature_L - 650.0) / 650.0
+        vmaxps ymm3, ymm3, ymm14
+        vminps ymm3, ymm3, ymm13 # f_L = clamp((temperature_L - 650.0) / 650.0, 0.0, 1.0)
+
+        # right
+        vmovups ymm4, [rdx + r14 + 4] # terrain_R
+        vmovups ymm5, [rsi + r14 + 4] # lava_R
+        vaddps ymm4, ymm4, ymm5 # H_R
+
+        vmovups ymm5, [rcx + r14 + 4] # temperature_R
+        vsubps ymm5, ymm5, ymm15 # temperature_R - 650.0
+        vdivps ymm5, ymm5, ymm15 # (temperature_R - 650.0) / 650.0
+        vmaxps ymm5, ymm5, ymm14
+        vminps ymm5, ymm5, ymm13 # f_R = clamp((temperature_R - 650.0) / 650.0, 0.0, 1.0)
+
+        # up
+        # lea r15, [r14 - r8 * 4]
+        mov r15, r8
+        shl r15, 2 # * 4
+        push r15
+        mov r15, r14
+        sub r15, [rsp]
+        add rsp, 8
+
+        vmovups ymm6, [rdx + r15] # terrain_U
+        vmovups ymm7, [rsi + r15] # lava_U
+        vaddps ymm6, ymm6, ymm7 # H_U
+
+        vmovups ymm7, [rcx + r15] # temperature_U
+        vsubps ymm7, ymm7, ymm15 # temperature_U - 650.0
+        vdivps ymm7, ymm7, ymm15 # (temperature_U - 650.0) / 650.0
+        vmaxps ymm7, ymm7, ymm14
+        vminps ymm7, ymm7, ymm13 # f_U = clamp((temperature_U - 650.0) / 650.0, 0.0, 1.0)
+
+
+        # down
+        lea r15, [r14 + r8 * 4]
+        vmovups ymm8, [rdx + r15] # terrain_D
+        vmovups ymm9, [rsi + r15] # lava_D
+        vaddps ymm8, ymm8, ymm9 # H_D
+
+        vmovups ymm9, [rcx + r15] # temperature_D
+        vsubps ymm9, ymm9, ymm15 # temperature_D - 650.0
+        vdivps ymm9, ymm9, ymm15 # (temperature_D - 650.0) / 650.0
+        vmaxps ymm9, ymm9, ymm14
+        vminps ymm9, ymm9, ymm13 # f_D = clamp((temperature_D - 650.0) / 650.0, 0.0, 1.0)
+
+        # coefficients
+
+        vmovups ymm15, [rip + vk_vec_k_scale] # 1.22
+        vmovups ymm14, [rip + vk_vec_k_base] # 0.18
+
+        vmulps ymm1, ymm1, ymm15 # 1.22 * fluid_C
+        vmulps ymm3, ymm3, ymm15 # 1.22 * fluid_L
+        vmulps ymm5, ymm5, ymm15 # 1.22 * fluid_R
+        vmulps ymm7, ymm7, ymm15 # 1.22 * fluid_U
+        vmulps ymm9, ymm9, ymm15 # 1.22 * fluid_D
+
+        vaddps ymm1, ymm1, ymm14 # 0.18 + 1.22 * fluid_C
+        vaddps ymm3, ymm3, ymm14 # 0.18 + 1.22 * fluid_L
+        vaddps ymm5, ymm5, ymm14 # 0.18 + 1.22 * fluid_R
+        vaddps ymm7, ymm7, ymm14 # 0.18 + 1.22 * fluid_U
+        vaddps ymm9, ymm9, ymm14 # 0.18 + 1.22 * fluid_D
+
+        vmulps ymm1, ymm1, ymm12 # viscDt * (0.18 + 1.22 * fluid_C)
+        vmulps ymm3, ymm3, ymm12 # viscDt * (0.18 + 1.22 * fluid_L)
+        vmulps ymm5, ymm5, ymm12 # viscDt * (0.18 + 1.22 * fluid_R)
+        vmulps ymm7, ymm7, ymm12 # viscDt * (0.18 + 1.22 * fluid_U)
+        vmulps ymm9, ymm9, ymm12 # viscDt * (0.18 + 1.22 * fluid_D)
+
+        # in
+
+        vsubps ymm10, ymm2, ymm0   # dropL = hL - hC
+        FLOW_FROM_DROP_AVX ymm10, ymm10, ymm3, ymm15 # inL
+
+        vsubps ymm11, ymm4, ymm0   # dropR = hR - hC
+        FLOW_FROM_DROP_AVX ymm11, ymm11, ymm5, ymm15 # inR
+
+        vsubps ymm12, ymm6, ymm0   # dropU = hU - hC
+        FLOW_FROM_DROP_AVX ymm12, ymm12, ymm7, ymm15 # inU
+
+        vsubps ymm13, ymm8, ymm0   # dropD = hD - hC
+        FLOW_FROM_DROP_AVX ymm13, ymm13, ymm9, ymm15 # inD
+
+        # in sum
+
+        vaddps ymm10, ymm10, ymm11
+        vaddps ymm10, ymm10, ymm12
+        vaddps ymm10, ymm10, ymm13
+        vmovups ymm15, ymm10 # in sum
+        
+        
+        # out
+
+        # .macro FLOW_FROM_DROP_AVX dst, drop, kval, tmp
+        vsubps ymm10, ymm0, ymm2   # dropL = hC - hL
+        FLOW_FROM_DROP_AVX ymm10, ymm10, ymm1, ymm14 # outL
+
+        vsubps ymm11, ymm0, ymm4   # dropR = hC - hR
+        FLOW_FROM_DROP_AVX ymm11, ymm11, ymm1, ymm14 # outR
+
+        vsubps ymm12, ymm0, ymm6   # dropU = hC - hU
+        FLOW_FROM_DROP_AVX ymm12, ymm12, ymm1, ymm14 # outU
+
+        vsubps ymm13, ymm0, ymm8   # dropD = hC - hD
+        FLOW_FROM_DROP_AVX ymm13, ymm13, ymm1, ymm14 # outD
+
+        # out sum
+
+        vmovups ymm14, ymm10
+        vaddps ymm14, ymm14, ymm11
+        vaddps ymm14, ymm14, ymm12
+        vaddps ymm14, ymm14, ymm13 # out sum
+
+        # ymm0 to ymm9 no longer needed
+        vmovups ymm0, [rsi + r14 + 0] # lava_C
+        vmovups ymm1, [rip + vk_vec_max_out] # 0.94
+        vmulps ymm0, ymm0, ymm1 # maxOut
+
+        # https://www.felixcloutier.com/x86/cmpps
+        # out sum > max out
+        vcmpps ymm1, ymm14, ymm0, 0x0E # VCMPGTPS
+
+        # out sum > 1.0e-6
+        vmovups ymm3, [rip + vk_vec_eps]
+        vcmpps ymm2, ymm14, ymm3, 0x0E # VCMPGTPS
+
+        # (out sum > max out) & (out sum > 1.0e-6)
+        vandps ymm2, ymm1, ymm2
+
+        # scale = maxOut/outSum
+        vmaxps ymm14, ymm14, ymm3
+        vdivps ymm4, ymm0, ymm14
+
+        # vandps ymm4, ymm4, ymm2 # temp
+
+        # outL *= scale
+        vmulps ymm5, ymm10, ymm4
+        vblendvps ymm10, ymm10, ymm5, ymm2
+
+        # outR *= scale
+        vmulps ymm6, ymm11, ymm4
+        vblendvps ymm11, ymm11, ymm6, ymm2
+
+        # outU *= scale
+        vmulps ymm7, ymm12, ymm4
+        vblendvps ymm12, ymm12, ymm7, ymm2
+
+        # outD *= scale
+        vmulps ymm8, ymm13, ymm4
+        vblendvps ymm13, ymm13, ymm8, ymm2
+
+        # out sum
+
+        vmovups ymm14, ymm10
+        vaddps ymm14, ymm14, ymm11
+        vaddps ymm14, ymm14, ymm12
+        vaddps ymm14, ymm14, ymm13 # out sum
+
+        # next
+        vmovups ymm0, [rsi + r14 + 0]
+        vaddps ymm0, ymm0, ymm15 # lavaHeight.data()[id] + inSum
+        vsubps ymm0, ymm0, ymm14 # lavaHeight.data()[id] + inSum - outSum
+
+        # !isfinite(next); self comparison
+        vcmpps ymm1, ymm0, ymm0, 0x3 # VCMPUNORDPS
+
+        vmovups ymm2, [rip + vk_vec_zero]
+        vblendvps ymm0, ymm0, ymm2, ymm1 # if (!std::isfinite(next)) { next = 0.0f; }
+
+
+        vmaxps ymm0, ymm0, ymm2
+        vmovups ymm2, [rip + vk_vec_six]
+        vminps ymm0, ymm0, ymm2 # clamp(next, 0.0, 6.0)
+        vmovups [rdi + r14 + 0], ymm0
+
+
+        add r13, 8
+        cmp r12, r13
+        ja .flux_loop_inner
+
+    inc r10
+    cmp r9, r10
+    ja .flux_loop
+
     ret
 
 # -----------------------------------------------------------------------------
