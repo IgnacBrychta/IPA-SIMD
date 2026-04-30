@@ -950,10 +950,141 @@ volcanoUpdateLavaFluxSIMDAsm:
 # void volcanoDiffuseHeatSIMDAsm(...)
 # -----------------------------------------------------------------------------
 .global volcanoDiffuseHeatSIMDAsm
+# rdi           =   temperatureNext.data()
+# rsi           =   temperature.data()
+# rdx           =   lavaHeight.data()
+# rcx           =   width
+# r8            =   height
+# r9            =   
+# ymm0          =   alphaDt
+# ymm1          =   dt
+# ymm2          =   lavaCooling
+# ymm3          =   ambientTemperature
 volcanoDiffuseHeatSIMDAsm:
     # TODO:
     # - iterate interior cells by rows
     # - compute laplacian
     # - add lava heating, subtract cooling
     # - clamp to [ambientTemperature, 1520]
+
+
+    mov r10, 1 # y
+    dec r8 # height - 1
+    mov r11, rdx # preserve terrainHeight.data()
+
+    # const int scalarStartX = 1 + ((width - 2) / 8) * 8;
+    mov r12, rcx
+    sub r12, 2 # - 2
+    shr r12, 3 # / 8
+    shl r12, 3 # * 8
+    add r12, 1 # + 1
+
+    # viscDt
+    vbroadcastss ymm15, xmm3 # broadcast ambientTemperature
+    vbroadcastss ymm14, xmm2 # broadcast lavaCooling
+    vbroadcastss ymm13, xmm1 # broadcast dt
+    vbroadcastss ymm12, xmm0 # broadcast alphaDt
+    vdivps ymm12, ymm12, ymm13 # alphaDt / dt = diffusionAlpha
+
+    .diffuse_loop:
+    # rax =  # row = y * width
+    mov rax, r10 
+    mul rcx
+    # rdx ignored
+
+    mov rdx, r11
+
+    mov r13, 1 # x
+        .diffuse_loop_inner:
+        # const std::size_t id = row + static_cast<std::size_t>(x);
+        mov rbx, rax
+        add rbx, r13 # rbx = id
+
+        # cell
+        lea r14, [rbx * 4]
+        vmovups ymm0, [rsi + r14 + 0] # temperature_C
+        vmovups ymm1, [rsi + r14 - 4] # temperature_L
+        vmovups ymm2, [rsi + r14 + 4] # temperature_R
+        # lea r9, [r14 - rcx * 4]
+        mov r9, r14
+        mov r14, rcx
+        shl r14, 2 # * 4
+        sub r9, r14
+
+        vmovups ymm3, [rsi + r9] # temperature_U
+        lea r9, [r14 + rcx * 4]
+        vmovups ymm4, [rsi + r9] # temperature_D
+
+        # lap
+        vaddps ymm5, ymm1, ymm2
+        vaddps ymm6, ymm3, ymm4
+        vaddps ymm5, ymm5, ymm6 # t_L + t_R + t_U + t_D
+
+        vmovups ymm6, [rip + vk_vec_four]
+        vmulps ymm6, ymm0, ymm6 # 4.0 * t_C
+
+        vaddps ymm5, ymm5, ymm6 # t_L + t_R + t_U + t_D + 4.0 * t_C
+
+        # fluid
+        vmovups ymm6, ymm0
+        vmovups ymm7, [rip + vk_vec_fluid_min]
+        vsubps ymm6, ymm6, ymm7 # t_C - 650.0
+        vdivps ymm6, ymm6, ymm7 # (t_C - 650.0) / 650.0
+        vmovups ymm7, [rip + vk_vec_zero]
+        vmaxps ymm6, ymm6, ymm7
+        vmovups ymm7, [rip + vk_vec_one]
+        vminps ymm6, ymm6, ymm7 # fluid = clamp((t_C - 650.0) / 650.0, 0.0, 1.0)
+
+        # lavaHeat
+        vmovups ymm7, [rdx + r14 + 0] # lavaHeight[id]
+
+        vmovups ymm9, [rip + vk_vec_lava_heat_s]
+        vmulps ymm8, ymm9, ymm6 # 100.0 * fluid
+        vmovups ymm9, [rip + vk_vec_lava_heat_b]
+        vaddps ymm8, ymm9, ymm8 # 420.0 + 100.0 * fluid
+
+        vmulps ymm7, ymm7, ymm8 # lavaHeight[id] * (420.0 + 100.0 * fluid)
+
+        # cooling
+        vmovups ymm8, ymm0 # t_C
+        vsubps ymm8, ymm8, ymm15 # t_C - ambientTemperature
+        vmulps ymm8, ymm8, ymm14 # lavaCooling * (t_C - ambientTemperature)
+
+        # next
+        vmulps ymm12, ymm12, ymm5 # diffusionAlpha * lap
+        vaddps ymm12, ymm12, ymm7 # diffusionAlpha * lap + lavaHeat
+        vsubps ymm12, ymm12, ymm8 # diffusionAlpha * lap + lavaHeat - cooling
+        vmulps ymm12, ymm12, ymm13 # dt * (diffusionAlpha * lap + lavaHeat - cooling)
+        vaddps ymm12, ymm12, ymm0 # c + dt * (diffusionAlpha * lap + lavaHeat - cooling)
+
+        # ! std::isfinite(next) ? std::clamp(next, ambientTemperature, 1520.0f) : ambientTemperature;
+        # need to preserve only next and ambientTemperature, so ymm0-ymm11 and ymm13-ymm14 free
+        
+        # clamp(next, ambientTemperature, 1520.0f)
+        
+        vmovups ymm0, ymm12
+        vmaxps ymm0, ymm0, ymm15
+        vmovups ymm1, [rip + vk_vec_max_temp]
+        vminps ymm0, ymm0, ymm1 # clamp(next, ambientTemperature, 1520.0f)
+
+
+        # ! isfinite(next); self comparison
+        vcmpps ymm1, ymm12, ymm12, 0x3 # VCMPUNORDPS
+
+        vmovups ymm2, [rip + vk_vec_zero]
+        vblendvps ymm3, ymm15, ymm0, ymm1
+
+
+        vmovups [rdi + r14 + 0], ymm3
+
+
+
+        add r13, 8
+        cmp r12, r13
+        ja .diffuse_loop_inner
+
+    inc r10
+    cmp r8, r10
+    ja .diffuse_loop
+
     ret
