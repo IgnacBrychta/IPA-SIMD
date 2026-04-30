@@ -704,7 +704,7 @@ volcanoUpdateLavaFluxSIMDAsm:
     mov r10, 1 # y
     dec r9 # height - 1
     mov r11, rdx # preserve terrainHeight.data()
-ret
+
     # const int scalarStartX = 1 + ((width - 2) / 8) * 8;
     mov r12, r8
     sub r12, 2 # - 2
@@ -714,6 +714,8 @@ ret
 
     # viscDt
     vbroadcastss ymm12, xmm0
+    sub rsp, 8 * 4 # 8*sizeof(float)
+    vmovups [rsp], ymm12 # preserve viscDt
 
 .flux_loop:
     # rax =  # row = y * width
@@ -725,6 +727,8 @@ ret
 
     mov r13, 1 # x
     .flux_loop_inner:
+        vmovups ymm12, [rsp] # "pop" viscDt
+
         # const std::size_t id = row + static_cast<std::size_t>(x);
         mov rbx, rax
         add rbx, r13 # rbx = id
@@ -937,6 +941,8 @@ ret
     inc r10
     cmp r9, r10
     ja .flux_loop
+
+    add rsp, 8 * 4 # 8*sizeof(float)
 
     ret
 
