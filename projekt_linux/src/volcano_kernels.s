@@ -109,7 +109,7 @@ volcanoFlowFromDropAsm:
     # xmm1 = k
 
     # pos = max(0, drop)
-    vxorps xmm2, xmm2, xmm2
+    vmovups xmm2, [rip + vk_vec_zero]
     vmaxss xmm0, xmm0, xmm2     # xmm0 = pos
 
     # tmp = pos + eps
