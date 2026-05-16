@@ -120,10 +120,10 @@ volcanoFlowFromDropAsm:
     vsqrtss xmm3, xmm3, xmm3
 
     # shape = a0 + a1 * sqrt(...)
-    movss xmm4, [rip + vk_shape_bias]
+    movss xmm4, [rip + vk_shape_scale]
     vmulss xmm3, xmm3, xmm4
 
-    movss xmm5, [rip + vk_shape_scale]
+    movss xmm5, [rip + vk_shape_bias]
     vaddss xmm3, xmm3, xmm5
 
     # result = pos * k * shape
@@ -406,7 +406,7 @@ volcanoParticleStepBatchAsm:
     mulss xmm1, xmm1 # z^2
 
     addss xmm0, xmm1 # r^2 = x^2 + z^2
-    movss xmm2, xmm1 # preserve r^2
+    movss xmm2, xmm0 # preserve r^2
     movss xmm1, [rip + vk_min_rad2_s]
 
     maxss xmm0, xmm1 # max(r^2 = x^2 + z^2, \eps_r)
@@ -661,7 +661,7 @@ volcanoParticleStepSIMDAsm:
     vmovups [r14], ymm9
 
 
-    vmovups ymm7, ymm2 # r^2
+    vmovups ymm7, ymm11 # r^2
     vmovups ymm9, [rip + vk_vec_cool_rad]
     vaddps ymm7, ymm7, ymm9 # r^2 + \eps_t
 
