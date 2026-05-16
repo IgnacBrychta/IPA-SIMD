@@ -170,7 +170,7 @@ volcanoParticleStepAsm:
     mulss xmm10, xmm3 # B * T_{norm}
 
     divss xmm10, xmm9 # B * T_{norm} / (1 + k_b * max(y_i, 0))
-
+    movss xmm9, xmm10
     addss xmm9, xmm1 #                                                                          a_y
 
     # axis x and z
@@ -190,7 +190,7 @@ volcanoParticleStepAsm:
     movss xmm12, [rip + vk_vent_rad2_s] # R_{vent}^2
     subss xmm12, xmm11 # R_{vent}^2 - r^2
 
-    movss xmm11, [rip + vk_one]
+    movss xmm11, [rip + vk_zero]
     maxss xmm11, xmm12 # max(0, R_{vent}^2 - r^2)
 
     mulss xmm10, xmm11 # K_{vent} * T_{norm} * max(0, R_{vent}^2 - r^2) =                       a_{vent}
@@ -309,6 +309,8 @@ volcanoParticleStepBatchAsm:
     # r11 = loop limit
     # r12 = struct *
     mov r12, [rbp + 0x28]
+    cmp r11, 0
+    je .tail_setup # skip SIMD if there's less than 8 particles
 .loop:
     mov r14, r10
     shl r14, 2 # incrementing by 8 (=2^3) indexes, multiply by 4 (2^2) (sizeof(float))
@@ -358,7 +360,7 @@ volcanoParticleStepBatchAsm:
     # ab for unsigned
     cmp r11, r10
     ja .loop
-
+.tail_setup:
 
 
     # process tail
@@ -377,6 +379,7 @@ volcanoParticleStepBatchAsm:
 
 
     mov r12, [rbp + 0x18] # *temperature
+    add r12, r10 # also increment temperature
     mov r13, [rbp + 0x28] # struct
 
 .tail_loop:
@@ -1078,8 +1081,6 @@ volcanoDiffuseHeatSIMDAsm:
         # isfinite(next); self comparison
         vcmpps ymm1, ymm11, ymm11, 0x3 # VCMPUNORDPS
 
-        # vmovups ymm2, [rip + vk_vec_zero]
-        # vblendvps ymm3, ymm15, ymm0, ymm1
         vblendvps ymm3, ymm0, ymm15, ymm1
 
 
